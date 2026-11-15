@@ -2,6 +2,7 @@ import hmac
 import logging
 import os
 import re
+import threading
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -62,6 +63,9 @@ async def require_bearer_token(request: Request, call_next):
     return await call_next(request)
 
 
+# One fetch at a time bounds memory, proxy spend and worst-case time.
+fetch_lock = threading.Lock()
+
 VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
 
@@ -90,11 +94,22 @@ def health() -> dict[str, str]:
 def transcript(
     body: TranscriptRequest, fetcher: Annotated[Fetcher, Depends(get_fetcher)]
 ) -> JSONResponse:
+    # Non-blocking: a second caller is told to retry later rather than queued behind a fetch
+    # that can take over a minute.
+    if not fetch_lock.acquire(blocking=False):
+        return JSONResponse({"error": "busy"}, status_code=429)
+    try:
+        return _run_fetch(body.video_id, fetcher)
+    finally:
+        fetch_lock.release()
+
+
+def _run_fetch(video_id: str, fetcher: Fetcher) -> JSONResponse:
     started = time.monotonic()
     error_class = None
     reason = None
     try:
-        lines = fetcher(body.video_id)
+        lines = fetcher(video_id)
         outcome = "ok" if lines else NO_CAPTIONS
     except Exception as error:  # noqa: BLE001 - catch-all so nothing reaches the server's tracebacks
         # Only the class name is kept. The error text can carry the proxy login (requests
@@ -107,7 +122,7 @@ def transcript(
             if classified == "unknown":
                 error_class = type(error).__name__
     duration_ms = round((time.monotonic() - started) * 1000)
-    line = f"outcome={outcome} reason={reason} video_id={body.video_id} duration_ms={duration_ms}"
+    line = f"outcome={outcome} reason={reason} video_id={video_id} duration_ms={duration_ms}"
     if error_class:
         line += f" error_class={error_class}"
     logger.info(line)
