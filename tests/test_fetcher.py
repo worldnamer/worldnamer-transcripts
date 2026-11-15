@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 import requests
-from youtube_transcript_api import NoTranscriptFound, TranscriptsDisabled
+from youtube_transcript_api import NoTranscriptFound
 
 from app import fetcher as fetcher_module
 from app.settings import Settings
@@ -77,11 +77,6 @@ def test_empty_listing_is_no_captions(library):
 
 def test_zero_snippets_is_no_captions(library):
     library.listing = FakeList([FakeTranscript("en", [])])
-    assert run() == []
-
-
-def test_disabled_transcripts_is_no_captions(library):
-    library.error = TranscriptsDisabled("x")
     assert run() == []
 
 

@@ -1,6 +1,8 @@
 import hmac
+import logging
 import os
 import re
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -11,7 +13,15 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, StrictStr, StringConstraints
 
 from app.fetcher import Fetcher, make_fetcher
+from app.outcomes import NO_CAPTIONS, classify
 from app.settings import Settings
+
+logger = logging.getLogger("transcripts")
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
 
 
 @asynccontextmanager
@@ -80,7 +90,30 @@ def health() -> dict[str, str]:
 def transcript(
     body: TranscriptRequest, fetcher: Annotated[Fetcher, Depends(get_fetcher)]
 ) -> JSONResponse:
-    lines = fetcher(body.video_id)
-    if not lines:
-        return JSONResponse({"outcome": "no_captions"})
-    return JSONResponse({"outcome": "ok", "lines": lines})
+    started = time.monotonic()
+    error_class = None
+    reason = None
+    try:
+        lines = fetcher(body.video_id)
+        outcome = "ok" if lines else NO_CAPTIONS
+    except Exception as error:  # noqa: BLE001 - catch-all so nothing reaches the server's tracebacks
+        # Only the class name is kept. The error text can carry the proxy login (requests
+        # builds http://user:pass@host), so it is never logged or returned.
+        classified = classify(error)
+        if classified == NO_CAPTIONS:
+            outcome = NO_CAPTIONS
+        else:
+            outcome, reason = "failed", classified
+            if classified == "unknown":
+                error_class = type(error).__name__
+    duration_ms = round((time.monotonic() - started) * 1000)
+    line = f"outcome={outcome} reason={reason} video_id={body.video_id} duration_ms={duration_ms}"
+    if error_class:
+        line += f" error_class={error_class}"
+    logger.info(line)
+
+    if outcome == "ok":
+        return JSONResponse({"outcome": "ok", "lines": lines})
+    if outcome == NO_CAPTIONS:
+        return JSONResponse({"outcome": NO_CAPTIONS})
+    return JSONResponse({"outcome": "failed", "reason": reason}, status_code=502)

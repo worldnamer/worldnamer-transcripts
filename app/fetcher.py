@@ -3,7 +3,7 @@
 from collections.abc import Callable
 
 import requests
-from youtube_transcript_api import NoTranscriptFound, TranscriptsDisabled, YouTubeTranscriptApi
+from youtube_transcript_api import NoTranscriptFound, YouTubeTranscriptApi
 from youtube_transcript_api.proxies import WebshareProxyConfig
 
 from app.settings import Settings
@@ -37,10 +37,7 @@ def make_fetcher(settings: Settings) -> Fetcher:
             ),
             http_client=TimeoutSession(),
         )
-        try:
-            transcripts = api.list(video_id)
-        except TranscriptsDisabled:
-            return []
+        transcripts = api.list(video_id)
         chosen = _choose(transcripts)
         if chosen is None:
             return []
