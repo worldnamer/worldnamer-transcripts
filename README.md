@@ -34,3 +34,9 @@ Run a single uvicorn process (no `--workers`).
 .venv/bin/ruff check .
 .venv/bin/ruff format --check .   # drop --check to apply formatting
 ```
+
+## Checks
+
+```sh
+bin/ci   # ruff check, ruff format --check, pytest, pip-audit
+```
