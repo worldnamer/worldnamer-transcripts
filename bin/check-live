@@ -1,0 +1,66 @@
+#!/bin/sh
+# Smoke-checks a running transcripts service. Usage: bin/check-live <base-url>
+# Needs TRANSCRIPTS_TOKEN and NO_CAPTIONS_VIDEO_ID in the environment. Uses curl and grep only.
+# Prints PASS or FAIL per check and never a response body or the token. Uses about 4 MB of
+# proxy bandwidth per run because it makes two real fetches.
+
+if [ "$#" -ne 1 ]; then
+  echo "usage: check-live <base-url>" >&2
+  exit 2
+fi
+if [ -z "${TRANSCRIPTS_TOKEN:-}" ]; then
+  echo "TRANSCRIPTS_TOKEN is not set" >&2
+  exit 2
+fi
+if [ -z "${NO_CAPTIONS_VIDEO_ID:-}" ]; then
+  echo "NO_CAPTIONS_VIDEO_ID is not set" >&2
+  exit 2
+fi
+
+base=${1%/}
+captioned=6MbLd7DWnSE
+# A literal newline (command substitution would strip it).
+nl='
+'
+failures=0
+
+# check <name> <expected-status> <expected-text> <token|none|wrong> <method> <path> [json-body]
+check() {
+  name=$1 want_status=$2 want_text=$3 auth=$4 method=$5 path=$6 body=${7:-}
+
+  # The token goes to curl as a config on stdin, so it never appears in a process listing.
+  case $auth in
+    token) cfg=$(printf 'header = "Authorization: Bearer %s"' "$TRANSCRIPTS_TOKEN") ;;
+    wrong) cfg='header = "Authorization: Bearer wrong-token-for-the-check"' ;;
+    *) cfg='' ;;
+  esac
+
+  if [ -n "$body" ]; then
+    out=$(printf '%s\n' "$cfg" | curl -s --config - -X "$method" \
+      -H 'Content-Type: application/json' -d "$body" \
+      --max-time 130 -w "${nl}%{http_code}" "$base$path")
+  else
+    out=$(printf '%s\n' "$cfg" | curl -s --config - -X "$method" \
+      --max-time 130 -w "${nl}%{http_code}" "$base$path")
+  fi
+  status=${out##*"$nl"}
+  response=${out%"$nl"*}
+
+  if [ "$status" = "$want_status" ] &&
+    { [ -z "$want_text" ] || printf '%s' "$response" | grep -qF "$want_text"; }; then
+    echo "PASS $name"
+  else
+    echo "FAIL $name (status $status)"
+    failures=$((failures + 1))
+  fi
+}
+
+check health 200 '"status":"ok"' none GET /health
+check captioned 200 '"outcome":"ok"' token POST /transcript "{\"video_id\":\"$captioned\"}"
+check no_captions 200 '"outcome":"no_captions"' token POST /transcript \
+  "{\"video_id\":\"$NO_CAPTIONS_VIDEO_ID\"}"
+check malformed 422 '"error":"invalid_video_id"' token POST /transcript '{"video_id":"abc"}'
+check no_token 401 '' none POST /transcript "{\"video_id\":\"$captioned\"}"
+check wrong_token 401 '' wrong POST /transcript "{\"video_id\":\"$captioned\"}"
+
+[ "$failures" -eq 0 ]
