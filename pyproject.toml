@@ -1,2 +1,10 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, import sorting, pyupgrade, bugbear
+select = ["E", "F", "I", "UP", "B"]

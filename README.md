@@ -27,3 +27,10 @@ Run a single uvicorn process (no `--workers`).
 ```sh
 .venv/bin/pytest
 ```
+
+## Lint
+
+```sh
+.venv/bin/ruff check .
+.venv/bin/ruff format --check .   # drop --check to apply formatting
+```
