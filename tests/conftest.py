@@ -21,7 +21,7 @@ def client(monkeypatch):
     monkeypatch.setenv("TRANSCRIPTS_TOKEN", FAKE_TOKEN)
     monkeypatch.setenv("WEBSHARE_PROXY_USERNAME", FAKE_PROXY_USERNAME)
     monkeypatch.setenv("WEBSHARE_PROXY_PASSWORD", FAKE_PROXY_PASSWORD)
-    with TestClient(app) as test_client:
+    with TestClient(app, headers={"Authorization": f"Bearer {FAKE_TOKEN}"}) as test_client:
         yield test_client
 
 
