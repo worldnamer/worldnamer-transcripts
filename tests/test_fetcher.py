@@ -91,6 +91,14 @@ def test_new_client_is_built_per_call_with_proxy_and_timeout_session(library):
     assert kwargs["proxy_config"].retries_when_blocked == 2
 
 
+def test_proxy_login_is_sent_exactly_as_given_with_no_suffix(library):
+    library.listing = FakeList([])
+    fetcher_module.make_fetcher(SETTINGS)("6MbLd7DWnSE")
+    config = library.created[0]["proxy_config"]
+    expected = f"http://{SETTINGS.proxy_username}:{SETTINGS.proxy_password}@p.webshare.io:80/"
+    assert config.to_requests_dict() == {"http": expected, "https": expected}
+
+
 def test_timeout_session_sets_default_timeout(monkeypatch):
     seen = {}
 
