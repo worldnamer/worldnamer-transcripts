@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Runs every check CI runs. Expects the dev dependencies installed in .venv.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+.venv/bin/ruff check .
+.venv/bin/ruff format --check .
+.venv/bin/pytest
+.venv/bin/pip-audit -r requirements.txt
