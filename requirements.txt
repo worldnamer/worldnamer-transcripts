@@ -1,2 +1,4 @@
 fastapi==0.163.0
 uvicorn==0.54.0
+youtube-transcript-api==1.2.5
+requests==2.34.2

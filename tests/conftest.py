@@ -1,7 +1,9 @@
+import socket
+
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app.main import app, get_fetcher
 
 FAKE_TOKEN = "t" * 64
 FAKE_PROXY_USERNAME = "fake-proxy-user"
@@ -21,3 +23,34 @@ def client(monkeypatch):
     monkeypatch.setenv("WEBSHARE_PROXY_PASSWORD", FAKE_PROXY_PASSWORD)
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    def refuse(*args, **kwargs):
+        raise AssertionError("tests must not open network connections")
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+
+
+class FakeFetcher:
+    """Stands in for the library wrapper; records calls and returns or raises a set result."""
+
+    def __init__(self):
+        self.result = [{"text": "hello", "start": 0.0}]
+        self.error = None
+        self.calls = []
+
+    def __call__(self, video_id):
+        self.calls.append(video_id)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+@pytest.fixture
+def fetcher(client):
+    fake = FakeFetcher()
+    client.app.dependency_overrides[get_fetcher] = lambda: fake
+    yield fake
+    client.app.dependency_overrides.clear()
