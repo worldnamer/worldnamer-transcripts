@@ -7,7 +7,12 @@ from youtube_transcript_api import NoTranscriptFound
 from app import fetcher as fetcher_module
 from app.settings import Settings
 
-SETTINGS = Settings(token="t" * 64, proxy_username="fake-user", proxy_password="fake-pass")
+SETTINGS = Settings(
+    token="t" * 64,
+    proxy_username="fake-user",
+    proxy_password="fake-pass",
+    deepinfra_key="fake-deepinfra-key",
+)
 
 
 class FakeTranscript:

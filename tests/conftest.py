@@ -8,11 +8,19 @@ from app.main import app, get_fetcher
 FAKE_TOKEN = "t" * 64
 FAKE_PROXY_USERNAME = "fake-proxy-user"
 FAKE_PROXY_PASSWORD = "fake-proxy-password"
+FAKE_DEEPINFRA_KEY = "fake-deepinfra-key-0123456789"
 
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
-    for name in ("TRANSCRIPTS_TOKEN", "WEBSHARE_PROXY_USERNAME", "WEBSHARE_PROXY_PASSWORD"):
+    for name in (
+        "TRANSCRIPTS_TOKEN",
+        "WEBSHARE_PROXY_USERNAME",
+        "WEBSHARE_PROXY_PASSWORD",
+        "DEEPINFRA_API_KEY",
+        "DEEPINFRA_MODEL",
+        "DEEPINFRA_BASE_URL",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -21,6 +29,7 @@ def client(monkeypatch):
     monkeypatch.setenv("TRANSCRIPTS_TOKEN", FAKE_TOKEN)
     monkeypatch.setenv("WEBSHARE_PROXY_USERNAME", FAKE_PROXY_USERNAME)
     monkeypatch.setenv("WEBSHARE_PROXY_PASSWORD", FAKE_PROXY_PASSWORD)
+    monkeypatch.setenv("DEEPINFRA_API_KEY", FAKE_DEEPINFRA_KEY)
     with TestClient(app, headers={"Authorization": f"Bearer {FAKE_TOKEN}"}) as test_client:
         yield test_client
 
