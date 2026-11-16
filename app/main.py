@@ -16,7 +16,7 @@ from pydantic import BaseModel, StrictStr, StringConstraints, field_validator
 from app.fetcher import Fetcher, make_fetcher
 from app.outcomes import NO_CAPTIONS, classify
 from app.settings import Settings
-from app.summarizer import Summarizer, make_summarizer
+from app.summarizer import Summarizer, SummaryFailed, make_summarizer
 
 logger = logging.getLogger("transcripts")
 if not logger.handlers:
@@ -161,14 +161,35 @@ def summary(
 
 def _run_summary(text: str, summarizer: Summarizer) -> JSONResponse:
     started = time.monotonic()
-    result = summarizer(text)
+    result = None
+    reason = upstream_status = error_class = None
+    try:
+        result = summarizer(text)
+        upstream_status = result.upstream_status
+    except SummaryFailed as failure:
+        reason, upstream_status, error_class = (
+            failure.reason,
+            failure.upstream_status,
+            failure.error_class,
+        )
+    except Exception as error:  # noqa: BLE001 - catch-all so nothing reaches the server's tracebacks
+        # Only the class name is kept: error text can carry the request, and so the text.
+        reason, error_class = "service_error", type(error).__name__
     duration_ms = round((time.monotonic() - started) * 1000)
     # Lengths and counts only: neither the text nor the summary is ever logged.
-    logger.info(
-        f"summary outcome=ok reason=None bytes_in={len(text.encode())} "
-        f"tokens_in={result.tokens_in} tokens_out={result.tokens_out} "
-        f"upstream_status={result.upstream_status} duration_ms={duration_ms}"
+    outcome = "ok" if result else "failed"
+    line = (
+        f"summary outcome={outcome} reason={reason} bytes_in={len(text.encode())} "
+        f"tokens_in={result.tokens_in if result else None} "
+        f"tokens_out={result.tokens_out if result else None} "
+        f"upstream_status={upstream_status} duration_ms={duration_ms}"
     )
+    if error_class:
+        line += f" error_class={error_class}"
+    logger.info(line)
+
+    if result is None:
+        return JSONResponse({"outcome": "failed", "reason": reason}, status_code=502)
     return JSONResponse(
         {
             "outcome": "ok",
