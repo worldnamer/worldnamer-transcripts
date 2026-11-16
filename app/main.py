@@ -85,6 +85,10 @@ def _declared_length(request: Request) -> int:
 # One fetch at a time bounds memory, proxy spend and worst-case time.
 fetch_lock = threading.Lock()
 
+# One summary at a time keeps spend predictable. Separate from fetch_lock so neither blocks
+# the other.
+summary_lock = threading.Lock()
+
 VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
 
@@ -182,7 +186,14 @@ def summary(
     if len(body.text.encode()) > MAX_TEXT_BYTES:
         _log_summary("failed", "too_long", body.text, None, None, 0)
         return JSONResponse(TOO_LONG, status_code=422)
-    return _run_summary(body.text, summarizer)
+    # Non-blocking, like the fetch: a second caller is told to retry rather than queued behind
+    # a call that can take minutes. Refusals above take no lock.
+    if not summary_lock.acquire(blocking=False):
+        return JSONResponse({"error": "busy"}, status_code=429)
+    try:
+        return _run_summary(body.text, summarizer)
+    finally:
+        summary_lock.release()
 
 
 def _run_summary(text: str, summarizer: Summarizer) -> JSONResponse:
