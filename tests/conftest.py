@@ -1,9 +1,11 @@
+import json
 import socket
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app, get_fetcher
+from app.main import app, get_fetcher, get_summarizer
+from app.summarizer import Summary
 
 FAKE_TOKEN = "t" * 64
 FAKE_PROXY_USERNAME = "fake-proxy-user"
@@ -61,5 +63,70 @@ class FakeFetcher:
 def fetcher(client):
     fake = FakeFetcher()
     client.app.dependency_overrides[get_fetcher] = lambda: fake
+    yield fake
+    client.app.dependency_overrides.clear()
+
+
+class FakeResponse:
+    """Stands in for a requests response: a status and the raw body bytes."""
+
+    def __init__(self, status_code=200, body=None, content=None):
+        self.status_code = status_code
+        self.content = content if content is not None else json.dumps(body).encode()
+
+
+def completion(content="A short summary.", model="vendor/model-x", finish_reason="stop", **extra):
+    """A DeepInfra chat completion body."""
+    body = {
+        "model": model,
+        "choices": [
+            {"message": {"role": "assistant", "content": content}, "finish_reason": finish_reason}
+        ],
+        "usage": {"prompt_tokens": 120, "completion_tokens": 45},
+    }
+    body.update(extra)
+    return body
+
+
+class FakePost:
+    """Stands in for requests.post; records each call and returns or raises a set result."""
+
+    def __init__(self):
+        self.response = FakeResponse(body=completion())
+        self.error = None
+        self.calls = []
+
+    def __call__(self, url, **kwargs):
+        self.calls.append({"url": url, **kwargs})
+        if self.error is not None:
+            raise self.error
+        return self.response
+
+
+class FakeSummarizer:
+    """Stands in for the DeepInfra wrapper at the route level."""
+
+    def __init__(self):
+        self.result = Summary(
+            text="A short summary.",
+            model="vendor/model-x",
+            tokens_in=120,
+            tokens_out=45,
+            upstream_status=200,
+        )
+        self.error = None
+        self.calls = []
+
+    def __call__(self, text):
+        self.calls.append(text)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+@pytest.fixture
+def summarizer(client):
+    fake = FakeSummarizer()
+    client.app.dependency_overrides[get_summarizer] = lambda: fake
     yield fake
     client.app.dependency_overrides.clear()

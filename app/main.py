@@ -11,11 +11,12 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, StrictStr, StringConstraints
+from pydantic import BaseModel, StrictStr, StringConstraints, field_validator
 
 from app.fetcher import Fetcher, make_fetcher
 from app.outcomes import NO_CAPTIONS, classify
 from app.settings import Settings
+from app.summarizer import Summarizer, make_summarizer
 
 logger = logging.getLogger("transcripts")
 if not logger.handlers:
@@ -74,14 +75,31 @@ class TranscriptRequest(BaseModel):
     video_id: Annotated[StrictStr, StringConstraints(pattern=VIDEO_ID_PATTERN.pattern)]
 
 
+class SummaryRequest(BaseModel):
+    # Strict: a number or null is rejected rather than coerced. Extra keys are ignored.
+    text: StrictStr
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("blank")
+        return value
+
+
 @app.exception_handler(RequestValidationError)
 async def invalid_request(request: Request, exc: RequestValidationError) -> JSONResponse:
     # Echoes nothing from the request: no input, no field names, no validator text.
-    return JSONResponse({"error": "invalid_video_id"}, status_code=422)
+    code = "invalid_text" if request.url.path == "/summary" else "invalid_video_id"
+    return JSONResponse({"error": code}, status_code=422)
 
 
 def get_fetcher(request: Request) -> Fetcher:
     return make_fetcher(request.app.state.settings)
+
+
+def get_summarizer(request: Request) -> Summarizer:
+    return make_summarizer(request.app.state.settings)
 
 
 @app.get("/health")
@@ -132,3 +150,31 @@ def _run_fetch(video_id: str, fetcher: Fetcher) -> JSONResponse:
     if outcome == NO_CAPTIONS:
         return JSONResponse({"outcome": NO_CAPTIONS})
     return JSONResponse({"outcome": "failed", "reason": reason}, status_code=502)
+
+
+@app.post("/summary")
+def summary(
+    body: SummaryRequest, summarizer: Annotated[Summarizer, Depends(get_summarizer)]
+) -> JSONResponse:
+    return _run_summary(body.text, summarizer)
+
+
+def _run_summary(text: str, summarizer: Summarizer) -> JSONResponse:
+    started = time.monotonic()
+    result = summarizer(text)
+    duration_ms = round((time.monotonic() - started) * 1000)
+    # Lengths and counts only: neither the text nor the summary is ever logged.
+    logger.info(
+        f"summary outcome=ok reason=None bytes_in={len(text.encode())} "
+        f"tokens_in={result.tokens_in} tokens_out={result.tokens_out} "
+        f"upstream_status={result.upstream_status} duration_ms={duration_ms}"
+    )
+    return JSONResponse(
+        {
+            "outcome": "ok",
+            "summary": result.text,
+            "model": result.model,
+            "tokens_in": result.tokens_in,
+            "tokens_out": result.tokens_out,
+        }
+    )
