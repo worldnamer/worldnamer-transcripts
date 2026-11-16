@@ -1,0 +1,55 @@
+#!/bin/sh
+# Smoke-checks POST /summary on a running transcripts service. Usage: bin/check-summary <base-url>
+# Needs TRANSCRIPTS_TOKEN in the environment. Uses curl and grep only.
+# Prints PASS or FAIL per check and never a response body or the token. The first check makes
+# one real call to the model, which costs a fraction of a cent.
+
+if [ "$#" -ne 1 ]; then
+  echo "usage: check-summary <base-url>" >&2
+  exit 2
+fi
+if [ -z "${TRANSCRIPTS_TOKEN:-}" ]; then
+  echo "TRANSCRIPTS_TOKEN is not set" >&2
+  exit 2
+fi
+
+base=${1%/}
+sample='{"text":"The lighthouse keeper climbed the stairs each evening to light the lamp. One night a storm knocked out the generator, so he lit the old oil lamp by hand and kept it burning until dawn, guiding three fishing boats safely back into the harbour."}'
+# A literal newline (command substitution would strip it).
+nl='
+'
+failures=0
+
+# check <name> <expected-status> <expected-text> <token|none|wrong> <json-body>
+check() {
+  name=$1 want_status=$2 want_text=$3 auth=$4 body=$5
+
+  # The token goes to curl as a config on stdin, so it never appears in a process listing.
+  case $auth in
+    token) cfg=$(printf 'header = "Authorization: Bearer %s"' "$TRANSCRIPTS_TOKEN") ;;
+    wrong) cfg='header = "Authorization: Bearer wrong-token-for-the-check"' ;;
+    *) cfg='' ;;
+  esac
+
+  # 170 seconds: longer than the service's own worst case (5 s connect plus 150 s read).
+  out=$(printf '%s\n' "$cfg" | curl -s --config - -X POST \
+    -H 'Content-Type: application/json' -d "$body" \
+    --max-time 170 -w "${nl}%{http_code}" "$base/summary")
+  status=${out##*"$nl"}
+  response=${out%"$nl"*}
+
+  if [ "$status" = "$want_status" ] &&
+    { [ -z "$want_text" ] || printf '%s' "$response" | grep -qF "$want_text"; }; then
+    echo "PASS $name"
+  else
+    echo "FAIL $name (status $status)"
+    failures=$((failures + 1))
+  fi
+}
+
+check summary 200 '"outcome":"ok"' token "$sample"
+check no_token 401 '"error":"unauthorized"' none "$sample"
+check wrong_token 401 '"error":"unauthorized"' wrong "$sample"
+check blank_text 422 '"error":"invalid_text"' token '{"text":"   "}'
+
+[ "$failures" -eq 0 ]
