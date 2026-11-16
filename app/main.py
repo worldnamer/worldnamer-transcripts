@@ -38,6 +38,15 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
 
 PUBLIC_PATHS = frozenset({"/health"})
 
+# The model's context is large (the reference model takes a million tokens), so this is a
+# guard against absurd input rather than a fit to the context. 300,000 UTF-8 bytes is at most
+# about 100,000 tokens. A longer text is refused whole; it is never cut.
+MAX_TEXT_BYTES = 300_000
+# Refuses a body before it is read. Generous: JSON escaping can make a text several times its size.
+MAX_BODY_BYTES = 2_000_000
+
+TOO_LONG = {"outcome": "failed", "reason": "too_long"}
+
 
 def _token_matches(header: str | None, token: str) -> bool:
     if header is None:
@@ -61,7 +70,16 @@ async def require_bearer_token(request: Request, call_next):
             status_code=401,
             headers={"WWW-Authenticate": "Bearer"},
         )
+    if request.url.path == "/summary" and _declared_length(request) > MAX_BODY_BYTES:
+        return JSONResponse(TOO_LONG, status_code=422)
     return await call_next(request)
+
+
+def _declared_length(request: Request) -> int:
+    try:
+        return int(request.headers.get("content-length", "0"))
+    except ValueError:
+        return 0
 
 
 # One fetch at a time bounds memory, proxy spend and worst-case time.
@@ -84,6 +102,11 @@ class SummaryRequest(BaseModel):
     def not_blank(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("blank")
+        try:
+            value.encode()
+        except UnicodeEncodeError:
+            # A lone surrogate (JSON allows one) cannot be sent on as UTF-8.
+            raise ValueError("not UTF-8") from None
         return value
 
 
@@ -156,6 +179,9 @@ def _run_fetch(video_id: str, fetcher: Fetcher) -> JSONResponse:
 def summary(
     body: SummaryRequest, summarizer: Annotated[Summarizer, Depends(get_summarizer)]
 ) -> JSONResponse:
+    if len(body.text.encode()) > MAX_TEXT_BYTES:
+        _log_summary("failed", "too_long", body.text, None, None, 0)
+        return JSONResponse(TOO_LONG, status_code=422)
     return _run_summary(body.text, summarizer)
 
 
@@ -176,17 +202,8 @@ def _run_summary(text: str, summarizer: Summarizer) -> JSONResponse:
         # Only the class name is kept: error text can carry the request, and so the text.
         reason, error_class = "service_error", type(error).__name__
     duration_ms = round((time.monotonic() - started) * 1000)
-    # Lengths and counts only: neither the text nor the summary is ever logged.
     outcome = "ok" if result else "failed"
-    line = (
-        f"summary outcome={outcome} reason={reason} bytes_in={len(text.encode())} "
-        f"tokens_in={result.tokens_in if result else None} "
-        f"tokens_out={result.tokens_out if result else None} "
-        f"upstream_status={upstream_status} duration_ms={duration_ms}"
-    )
-    if error_class:
-        line += f" error_class={error_class}"
-    logger.info(line)
+    _log_summary(outcome, reason, text, result, upstream_status, duration_ms, error_class)
 
     if result is None:
         return JSONResponse({"outcome": "failed", "reason": reason}, status_code=502)
@@ -199,3 +216,16 @@ def _run_summary(text: str, summarizer: Summarizer) -> JSONResponse:
             "tokens_out": result.tokens_out,
         }
     )
+
+
+def _log_summary(outcome, reason, text, result, upstream_status, duration_ms, error_class=None):
+    # Lengths and counts only: neither the text nor the summary is ever logged.
+    line = (
+        f"summary outcome={outcome} reason={reason} bytes_in={len(text.encode())} "
+        f"tokens_in={result.tokens_in if result else None} "
+        f"tokens_out={result.tokens_out if result else None} "
+        f"upstream_status={upstream_status} duration_ms={duration_ms}"
+    )
+    if error_class:
+        line += f" error_class={error_class}"
+    logger.info(line)
