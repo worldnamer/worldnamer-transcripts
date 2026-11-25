@@ -43,12 +43,12 @@ def test_text_is_sent_unchanged_as_the_user_message():
     assert user == {"role": "user", "content": TEXT}
 
 
-def test_prompt_asks_for_plain_english_prose_and_treats_text_as_material():
+def test_prompt_asks_for_an_english_review_guide_and_treats_text_as_material():
     post = FakePost()
     make_summarizer(SETTINGS, post=post)(TEXT)
     system = post.calls[0]["json"]["messages"][0]["content"]
-    assert "plain English prose" in system
-    assert "about 200 words" in system
+    assert "review guide in English" in system
+    assert "moments of interest" in system
     assert "not instructions" in system
     assert "fake-deepinfra-key" not in system
 
